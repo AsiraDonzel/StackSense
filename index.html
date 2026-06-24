@@ -820,9 +820,18 @@
       }
     }
 
-    /* ============================================================
-       LOAD MODEL
-       ============================================================ */
+    // Helper to race a promise with a timer to prevent silent GPU hangs
+    function promiseWithTimeout(promise, ms, errorMsg) {
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
+      });
+      return Promise.race([promise, timeoutPromise]).then((res) => {
+        clearTimeout(timeoutId);
+        return res;
+      });
+    }
+
     /* ============================================================
        LOAD MODEL
        ============================================================ */
@@ -886,22 +895,11 @@
       }
     }
 
-    // Helper to race a promise with a timer
-    function promiseWithTimeout(promise, ms, errorMsg) {
-      let timeoutId;
-      const timeoutPromise = new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
-      });
-      return Promise.race([promise, timeoutPromise]).then((res) => {
-        clearTimeout(timeoutId);
-        return res;
-      });
-    }
-
     /* ---- Progress callback ---- */
     function onProgress({ status, file, progress, loaded, total }) {
       if (status === 'initiate') {
-        progressFile.textContent = `Fetching: ${file.split('/').pop()}`;
+        const name = file ? file.split('/').pop() : 'weights';
+        progressFile.textContent = `Fetching: ${name}`;
         progressBar.style.width  = '0%';
         progressPct.textContent  = '0%';
         progressBytes.textContent = '';
@@ -909,7 +907,8 @@
 
       if (status === 'download' || status === 'progress') {
         const pct = progress != null ? Math.round(progress) : 0;
-        progressFile.textContent   = `Downloading: ${file.split('/').pop()}`;
+        const name = file ? file.split('/').pop() : 'weights';
+        progressFile.textContent   = `Downloading: ${name}`;
         progressBar.style.width    = `${pct}%`;
         progressPct.textContent    = `${pct}%`;
         progressBytes.textContent  = total
@@ -953,7 +952,7 @@
       let accumulatedText = "";
       const streamer = new TextStreamer(generator.tokenizer, {
         skip_prompt: true,
-        on_token_callback: (text) => {
+        callback_function: (text) => {
           accumulatedText += text;
           displayResult(accumulatedText);
         }
@@ -1001,10 +1000,14 @@
       outputEl.innerHTML = highlight(escapeHtml(text));
     }
 
-    function showError(message) {
+    function showError(message, err = null) {
       outputEl.classList.add('error');
       outputLabel.textContent = 'error';
-      outputEl.textContent = `[ERROR] ${message}`;
+      if (err && err.stack) {
+        outputEl.textContent = `[ERROR] ${message}\n\nStack Trace:\n${err.stack}`;
+      } else {
+        outputEl.textContent = `[ERROR] ${message}`;
+      }
     }
 
     /* ============================================================
@@ -1066,7 +1069,7 @@
           modelBadge.textContent = 'error';
           modelStatusText.textContent = 'Cloud Engine: request failed';
         }
-        showError(err.message || 'An unexpected error occurred.');
+        showError(err.message || 'An unexpected error occurred.', err);
       } finally {
         setLoadingState(false);
       }

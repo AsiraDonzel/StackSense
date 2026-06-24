@@ -1,5 +1,8 @@
 // api/analyze.js
 // Vercel Serverless Function to call Hugging Face Inference API securely
+// Uses Node's native 'https' module to prevent Vercel IPv6 'fetch failed' resolution bugs.
+
+import https from 'https';
 
 export default async function handler(req, res) {
   // Guard: Only allow POST requests
@@ -20,36 +23,32 @@ export default async function handler(req, res) {
     });
   }
 
-  // The prompt matches the original Hugging Face specifications
   const prompt = "Explain the following stack trace in simple terms and suggest a fix:\n" + stackTrace.trim();
 
+  // Call Hugging Face API using the native https module (bypasses Vercel undici fetch IPv6 issue)
   try {
-    const response = await fetch(
+    const responseData = await makeHttpsRequest(
       "https://api-inference.huggingface.co/models/Salesforce/codegen-350M-mono",
       {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ inputs: prompt })
-      }
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'StackSense/1.0 (Vercel Serverless)'
+      },
+      JSON.stringify({ inputs: prompt })
     );
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      return res.status(response.status).json({
-        error: `Hugging Face API responded with status ${response.status}: ${errorText}`
-      });
-    }
-
-    const data = await response.json();
+    // Parse the response
+    const data = JSON.parse(responseData);
     
-    // Parse response: if it's an array, extract generated_text from the first element
+    // Extract explanation
     const explanation = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
 
     if (!explanation) {
-      throw new Error('Hugging Face API returned an empty response.');
+      // If the model returned an error message in JSON
+      if (data.error) {
+        return res.status(500).json({ error: `Hugging Face API Error: ${data.error}` });
+      }
+      throw new Error('Hugging Face API returned an empty or invalid response.');
     }
 
     return res.status(200).json({ explanation });
@@ -57,4 +56,42 @@ export default async function handler(req, res) {
     console.error('Serverless Function Error:', err);
     return res.status(500).json({ error: err.message || 'Internal Server Error' });
   }
+}
+
+// Helper function to perform post requests via native https
+function makeHttpsRequest(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const urlObj = new URL(url);
+    const options = {
+      method: 'POST',
+      hostname: urlObj.hostname,
+      path: urlObj.pathname + urlObj.search,
+      headers: headers,
+      timeout: 25000 // generous 25s timeout for cold model starts
+    };
+
+    const req = https.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve(data);
+        } else {
+          reject(new Error(`API responded with status ${res.statusCode}: ${data}`));
+        }
+      });
+    });
+
+    req.on('error', (err) => {
+      reject(err);
+    });
+
+    req.on('timeout', () => {
+      req.destroy();
+      reject(new Error('Request timed out while waiting for Hugging Face Inference API.'));
+    });
+
+    req.write(body);
+    req.end();
+  });
 }
