@@ -1,0 +1,992 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StackSense – Terminal-grade Stack Trace Explainer</title>
+  <meta name="description" content="Paste your stack trace and get a plain-English explanation plus a fix suggestion. Runs in your browser." />
+  
+  <!-- Modern sans-serif for UI layout; Monospace is preserved for code panels -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <style>
+    /* =============================================
+       CORE DESIGN SYSTEM
+       Theme requirements: background #1e1e1e, text #d4d4d4, accent #00ff00
+       ============================================= */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --bg: #1e1e1e;
+      --bg-darker: #141414;
+      --bg-lighter: #282828;
+      --border: #333333;
+      --border-glow: rgba(0, 255, 0, 0.15);
+      
+      --text: #d4d4d4;
+      --text-bright: #ffffff;
+      --text-muted: #808080;
+      
+      --accent: #00ff00;
+      --accent-dim: #00cc00;
+      --accent-glow: rgba(0, 255, 0, 0.25);
+      
+      --error: #ff3b30;
+      --error-bg: rgba(255, 59, 48, 0.08);
+      --error-glow: rgba(255, 59, 48, 0.2);
+      
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      
+      --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+      --font-mono: 'Courier New', Courier, monospace;
+    }
+
+    /* Elegant custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: var(--bg-darker);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #3c3c3c;
+      border-radius: var(--radius-sm);
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4f4f4f;
+    }
+
+    /* Ambient background gradient glow */
+    body {
+      background-color: var(--bg);
+      background-image: 
+        radial-gradient(circle at 50% -100px, rgba(0, 255, 0, 0.08) 0%, transparent 60%),
+        radial-gradient(circle at 10% 20%, rgba(0, 0, 0, 0.2) 0%, transparent 40%);
+      color: var(--text);
+      font-family: var(--font-sans);
+      font-size: 14px;
+      line-height: 1.6;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      padding: 60px 20px 80px;
+    }
+
+    /* =============================================
+       LAYOUT CONTAINER
+       ============================================= */
+    .container {
+      width: 100%;
+      max-width: 700px;
+      display: flex;
+      flex-direction: column;
+      gap: 28px;
+      animation: fadeIn 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* =============================================
+       HEADER & TERMINAL LOGO
+       ============================================= */
+    .header {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+
+    .logo-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+
+    .header h1 {
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: -0.02em;
+      position: relative;
+    }
+
+    .header h1 .cursor {
+      color: var(--accent);
+      font-weight: 500;
+      animation: cursorBlink 1.1s step-end infinite;
+      margin-left: 2px;
+    }
+
+    @keyframes cursorBlink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0; }
+    }
+
+    .header .subtitle {
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      max-width: 500px;
+      margin: 0 auto;
+      line-height: 1.5;
+    }
+
+    .header .prompt {
+      color: var(--accent);
+      font-family: var(--font-mono);
+      font-weight: bold;
+      margin-right: 6px;
+    }
+
+    /* =============================================
+       TERMINAL CHASSIS / GLASS CARDS
+       ============================================= */
+    .terminal-card {
+      background-color: var(--bg-darker);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      box-shadow: 
+        0 4px 30px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      overflow: hidden;
+      transition: border-color 0.3s, box-shadow 0.3s;
+      position: relative;
+    }
+
+    .terminal-card:focus-within {
+      border-color: var(--accent-dim);
+      box-shadow: 
+        0 4px 30px rgba(0, 0, 0, 0.5),
+        0 0 12px var(--accent-glow),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+
+    /* Terminal window title bar */
+    .terminal-header {
+      background: linear-gradient(to bottom, #232323, #1a1a1a);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      user-select: none;
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 6px;
+    }
+
+    .control-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      opacity: 0.75;
+    }
+    .control-close   { background-color: #ff5f56; }
+    .control-minimize{ background-color: #ffbd2e; }
+    .control-maximize{ background-color: #27c93f; }
+
+    .window-title {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-weight: 500;
+      flex-grow: 1;
+      text-align: center;
+      margin-right: 48px; /* Offset the window controls to center title */
+      letter-spacing: 0.5px;
+    }
+
+    /* Scanline effect overlay */
+    .terminal-card::after {
+      content: " ";
+      display: block;
+      position: absolute;
+      top: 0; left: 0; bottom: 0; right: 0;
+      background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+      background-size: 100% 4px;
+      z-index: 10;
+      pointer-events: none;
+      opacity: 0.15;
+    }
+
+    /* =============================================
+       INPUT AREA
+       ============================================= */
+    .input-wrapper {
+      position: relative;
+    }
+
+    #stackTraceInput {
+      width: 100%;
+      min-height: 240px;
+      padding: 20px;
+      background-color: transparent;
+      border: none;
+      outline: none;
+      resize: vertical;
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      line-height: 1.7;
+      caret-color: var(--accent);
+    }
+
+    #stackTraceInput::placeholder {
+      color: #555555;
+    }
+
+    /* =============================================
+       STATUS / SETTINGS PANEL
+       ============================================= */
+    .status-panel {
+      background-color: #181818;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .engine-info {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .status-indicator {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    /* Hardware LED blink animations */
+    .led {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background-color: var(--text-muted);
+      transition: background-color 0.3s, box-shadow 0.3s;
+    }
+    .led-idle    { background-color: #444444; box-shadow: none; }
+    .led-loading { background-color: var(--accent); animation: ledPulse 1s infinite alternate; }
+    .led-ready   { background-color: var(--accent); box-shadow: 0 0 8px var(--accent); }
+    .led-running { background-color: var(--accent); animation: ledFlash 0.3s infinite alternate; }
+    .led-error   { background-color: var(--error); box-shadow: 0 0 8px var(--error); }
+
+    @keyframes ledPulse {
+      0% { opacity: 0.4; box-shadow: 0 0 2px var(--accent-glow); }
+      100% { opacity: 1; box-shadow: 0 0 10px var(--accent); }
+    }
+    @keyframes ledFlash {
+      0% { opacity: 0.2; }
+      100% { opacity: 1; box-shadow: 0 0 12px var(--accent); }
+    }
+
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      font-weight: bold;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 3px;
+      background-color: #222;
+      border: 1px solid #333;
+    }
+    .badge-loading { border-color: var(--accent-dim); color: var(--accent); }
+    .badge-ready   { border-color: var(--accent-dim); color: var(--accent); }
+    .badge-running { border-color: var(--accent-dim); color: var(--accent); }
+    .badge-error   { border-color: var(--error); color: var(--error); }
+
+    /* Custom Switch Container */
+    .gpu-toggle-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      transition: color 0.2s;
+    }
+    .gpu-toggle-container:hover {
+      color: var(--text-bright);
+    }
+
+    /* Custom Switch styling */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 32px;
+      height: 18px;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #333;
+      transition: .3s cubic-bezier(0.16, 1, 0.3, 1);
+      border-radius: 18px;
+      border: 1px solid var(--border);
+    }
+    .slider::before {
+      position: absolute;
+      content: "";
+      height: 12px;
+      width: 12px;
+      left: 2px;
+      bottom: 2px;
+      background-color: var(--text-muted);
+      transition: .3s cubic-bezier(0.16, 1, 0.3, 1);
+      border-radius: 50%;
+    }
+    input:checked + .slider {
+      background-color: rgba(0, 255, 0, 0.1);
+      border-color: var(--accent-dim);
+    }
+    input:checked + .slider::before {
+      transform: translateX(14px);
+      background-color: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+    }
+    input:disabled + .slider {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Live Progress Bar */
+    .progress-container {
+      background-color: var(--bg-darker);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.72rem;
+      font-family: var(--font-mono);
+    }
+
+    .progress-bar-track {
+      height: 4px;
+      background-color: #222;
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background-color: var(--accent);
+      box-shadow: 0 0 8px var(--accent);
+      border-radius: 2px;
+      transition: width 0.2s ease-out;
+    }
+
+    /* =============================================
+       ANALYZE BUTTON
+       ============================================= */
+    .actions-row {
+      display: flex;
+      justify-content: flex-end;
+    }
+
+    #analyzeBtn {
+      background-color: transparent;
+      color: var(--accent);
+      border: 1.5px solid var(--accent);
+      border-radius: var(--radius-md);
+      padding: 12px 32px;
+      font-family: var(--font-mono);
+      font-size: 0.88rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    #analyzeBtn svg {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2.5px;
+      transition: transform 0.25s ease;
+    }
+
+    #analyzeBtn:hover:not(:disabled) {
+      background-color: var(--accent);
+      color: var(--bg-darker);
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+
+    #analyzeBtn:hover:not(:disabled) svg {
+      transform: translateX(2px);
+    }
+
+    #analyzeBtn:disabled {
+      border-color: #444;
+      color: #666;
+      cursor: not-allowed;
+    }
+
+    /* =============================================
+       OUTPUT PANEL
+       ============================================= */
+    .output-card {
+      display: none;
+      transform-origin: top;
+      animation: slideDown 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .output-card.visible {
+      display: block;
+    }
+
+    @keyframes slideDown {
+      from { opacity: 0; transform: scaleY(0.95); }
+      to   { opacity: 1; transform: scaleY(1); }
+    }
+
+    /* Real-time Loader Bar scanning */
+    .scanning-line {
+      display: none;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--accent), transparent);
+      background-size: 200% 100%;
+      animation: scanEffect 1.2s linear infinite;
+    }
+    .scanning-line.active {
+      display: block;
+    }
+
+    @keyframes scanEffect {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    #output {
+      margin: 0;
+      padding: 22px;
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      line-height: 1.8;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+      background-color: #161616;
+    }
+
+    #output.error {
+      color: #ff5f56;
+      background-color: var(--error-bg);
+      border-left: 2px solid var(--error);
+    }
+
+    /* =============================================
+       CODE SYNTAX HIGHLIGHT COLORS
+       ============================================= */
+    .hl-keyword { color: #569cd6; font-weight: 500; }  /* Visual Studio Blue */
+    .hl-string  { color: #ce9178; }                    /* Amber string */
+    .hl-comment { color: #6a9955; font-style: italic; } /* Green comments */
+    .hl-accent  { color: var(--accent); font-weight: bold; }
+
+    /* =============================================
+       FOOTER
+       ============================================= */
+    footer {
+      margin-top: auto;
+      padding-top: 40px;
+      text-align: center;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    footer a {
+      color: var(--text-bright);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--text-muted);
+      transition: color 0.2s, border-color 0.2s;
+    }
+
+    footer a:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+    }
+
+    /* =============================================
+       RESPONSIVE DESIGN
+       ============================================= */
+    @media (max-width: 480px) {
+      body { padding: 40px 14px; }
+      .header h1 { font-size: 1.8rem; }
+      .actions-row, #analyzeBtn { width: 100%; }
+      #analyzeBtn { justify-content: center; }
+      .status-row { flex-direction: column; align-items: stretch; }
+      .gpu-toggle-container { justify-content: space-between; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+
+    <!-- ======== HEADER ======== -->
+    <header class="header">
+      <div class="logo-container">
+        <!-- SVG terminal chip icon -->
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 17 10 11 4 5"></polyline>
+          <line x1="12" y1="19" x2="20" y2="19"></line>
+        </svg>
+        <h1>StackSense<span class="cursor">_</span></h1>
+      </div>
+      <p class="subtitle">
+        <span class="prompt">guest@stacksense:~$</span>Explain stack traces in plain-English and suggest actionable fixes locally.
+      </p>
+    </header>
+
+    <!-- ======== ENGINE STATUS & CONFIG ======== -->
+    <section class="status-panel" aria-label="Engine configuration">
+      <div class="status-row">
+        <div class="engine-info">
+          <span class="status-indicator">
+            <span id="modelLed" class="led led-idle" aria-hidden="true"></span>
+            <span id="modelStatusText">Model inactive. Loads on first click.</span>
+          </span>
+        </div>
+        
+        <div style="display: flex; align-items: center; gap: 16px;">
+          <!-- GPU Acceleration Switch -->
+          <label class="gpu-toggle-container" id="gpuLabel">
+            <span>GPU Acceleration</span>
+            <span class="switch">
+              <input type="checkbox" id="webgpuToggle" checked>
+              <span class="slider"></span>
+            </span>
+          </label>
+          <span id="modelBadge" class="badge">idle</span>
+        </div>
+      </div>
+
+      <!-- Download progress slider (displays file download sizes) -->
+      <div id="modelProgressWrap" class="progress-container" style="display:none" aria-hidden="true">
+        <div class="progress-meta">
+          <span id="progressFile" style="color: var(--text-bright);">Retrieving weights...</span>
+          <span id="progressPct" style="color: var(--accent); font-weight: bold;">0%</span>
+        </div>
+        <div class="progress-bar-track">
+          <div id="progressBar" class="progress-bar-fill"></div>
+        </div>
+        <div id="progressBytes" style="font-size: 0.68rem; color: var(--text-muted); text-align: right; margin-top: 2px;"></div>
+      </div>
+    </section>
+
+    <!-- ======== INPUT AREA ======== -->
+    <main class="terminal-card" aria-label="Stack trace editor">
+      <div class="terminal-header">
+        <div class="window-controls" aria-hidden="true">
+          <span class="control-dot control-close"></span>
+          <span class="control-dot control-minimize"></span>
+          <span class="control-dot control-maximize"></span>
+        </div>
+        <span class="window-title">stack_trace.log</span>
+      </div>
+      <div class="input-wrapper">
+        <textarea
+          id="stackTraceInput"
+          spellcheck="false"
+          autocorrect="off"
+          autocapitalize="off"
+          aria-label="Paste stack trace content here"
+          placeholder="Paste your stack trace here... (e.g., TypeError: Cannot read properties of undefined)"
+        ></textarea>
+      </div>
+    </main>
+
+    <!-- ======== ACTION ROW ======== -->
+    <div class="actions-row">
+      <button id="analyzeBtn" type="button" aria-live="polite">
+        <span>Analyze Trace</span>
+        <!-- Inline Play SVG icon -->
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polygon points="5 3 19 12 5 21 5 3"></polygon>
+        </svg>
+      </button>
+    </div>
+
+    <!-- ======== OUTPUT AREA ======== -->
+    <section
+      id="outputPanel"
+      class="terminal-card output-card"
+      aria-label="Analysis explanation output"
+      aria-live="polite"
+    >
+      <div class="terminal-header">
+        <div class="window-controls" aria-hidden="true">
+          <span class="control-dot control-close"></span>
+          <span class="control-dot control-minimize"></span>
+          <span class="control-dot control-maximize"></span>
+        </div>
+        <span id="outputLabel" class="window-title">analysis_result.md</span>
+      </div>
+      
+      <!-- Linear animated scanning element -->
+      <div id="loaderBar" class="scanning-line" role="progressbar" aria-label="Analyzing trace..."></div>
+      
+      <!-- Generated markdown analysis -->
+      <pre id="output"></pre>
+    </section>
+
+  </div><!-- /.container -->
+
+  <footer>
+    Model: <a href="https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct" target="_blank" rel="noopener">SmolLM2-135M-Instruct</a>
+    &middot; Powered by <a href="https://huggingface.co/docs/transformers.js" target="_blank" rel="noopener">Transformers.js v3</a>
+    <br>
+    Zero API keys required. Runs completely locally and securely inside your browser.
+  </footer>
+
+  <script type="module">
+    /* ============================================================
+       IMPORT — Transformers.js from jsDelivr CDN
+       ============================================================ */
+    import { pipeline, env, TextStreamer } from
+      'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3/dist/transformers.min.js';
+
+    // Configure cache
+    env.useBrowserCache  = true;
+    env.allowLocalModels = false;
+
+    const MODEL_ID = 'HuggingFaceTB/SmolLM2-135M-Instruct';
+
+    /* ============================================================
+       STATE MANAGEMENT
+       ============================================================ */
+    let generator    = null;
+    let modelReady   = false;
+    let loadedDevice = null;
+
+    /* ============================================================
+       DOM ELEMENTS
+       ============================================================ */
+    const inputEl           = document.getElementById('stackTraceInput');
+    const analyzeBtn        = document.getElementById('analyzeBtn');
+    const outputPanel       = document.getElementById('outputPanel');
+    const loaderBar         = document.getElementById('loaderBar');
+    const outputEl          = document.getElementById('output');
+    const outputLabel       = document.getElementById('outputLabel');
+    const modelStatusText   = document.getElementById('modelStatusText');
+    const modelBadge        = document.getElementById('modelBadge');
+    const modelProgressWrap = document.getElementById('modelProgressWrap');
+    const progressBar       = document.getElementById('progressBar');
+    const progressFile      = document.getElementById('progressFile');
+    const progressPct       = document.getElementById('progressPct');
+    const progressBytes     = document.getElementById('progressBytes');
+    const webgpuToggle      = document.getElementById('webgpuToggle');
+    const gpuLabel          = document.getElementById('gpuLabel');
+    const modelLed          = document.getElementById('modelLed');
+
+    // Auto-detect WebGPU support
+    if (!navigator.gpu) {
+      webgpuToggle.checked = false;
+      webgpuToggle.disabled = true;
+      gpuLabel.title = "WebGPU is not supported or enabled in this browser.";
+      gpuLabel.style.cursor = "not-allowed";
+      gpuLabel.style.opacity = "0.5";
+    }
+
+    /* ============================================================
+       LOAD MODEL
+       ============================================================ */
+    async function loadModel() {
+      setModelState('loading');
+      modelProgressWrap.style.display = 'flex';
+      modelProgressWrap.setAttribute('aria-hidden', 'false');
+
+      const targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
+
+      if (targetDevice === 'wasm') {
+        // Prevent worker thread deadlocks when running serverless
+        env.backends.onnx.wasm.numThreads = 1;
+      }
+
+      try {
+        generator = await pipeline(
+          'text-generation',
+          MODEL_ID,
+          {
+            dtype: 'q4',
+            device: targetDevice,
+            progress_callback: onProgress
+          }
+        );
+
+        loadedDevice = targetDevice;
+        modelReady = true;
+        setModelState('ready');
+
+        setTimeout(() => {
+          modelProgressWrap.style.display = 'none';
+          modelProgressWrap.setAttribute('aria-hidden', 'true');
+        }, 2000);
+      } catch (err) {
+        setModelState('error');
+        console.error("Failed to load model:", err);
+        throw new Error(`Model loading failed: ${err.message || err}`);
+      }
+    }
+
+    /* ---- Progress callback ---- */
+    function onProgress({ status, file, progress, loaded, total }) {
+      if (status === 'initiate') {
+        progressFile.textContent = `Fetching: ${file.split('/').pop()}`;
+        progressBar.style.width  = '0%';
+        progressPct.textContent  = '0%';
+        progressBytes.textContent = '';
+      }
+
+      if (status === 'download' || status === 'progress') {
+        const pct = progress != null ? Math.round(progress) : 0;
+        progressFile.textContent   = `Downloading: ${file.split('/').pop()}`;
+        progressBar.style.width    = `${pct}%`;
+        progressPct.textContent    = `${pct}%`;
+        progressBytes.textContent  = total
+          ? `${formatBytes(loaded)} / ${formatBytes(total)}`
+          : formatBytes(loaded);
+      }
+
+      if (status === 'done') {
+        progressBar.style.width = '100%';
+        progressPct.textContent = '100%';
+      }
+
+      if (status === 'ready') {
+        progressFile.textContent = 'AI weights successfully cached ✓';
+        progressBar.style.width  = '100%';
+        progressPct.textContent  = '100%';
+      }
+    }
+
+    /* ============================================================
+       API INFERENCE
+       ============================================================ */
+    async function getExplanation(stackTrace) {
+      // <!-- CUSTOMIZE PROMPT HERE -->
+      const messages = [
+        {
+          role: 'system',
+          content:
+            'You are a helpful assistant that explains programming errors ' +
+            'in plain English and suggests clear, practical fixes. ' +
+            'Be concise and structured.'
+        },
+        {
+          role: 'user',
+          content:
+            'Explain the following stack trace in simple terms and suggest a fix:\n' +
+            stackTrace.trim()
+        }
+      ];
+
+      let accumulatedText = "";
+      const streamer = new TextStreamer(generator.tokenizer, {
+        skip_prompt: true,
+        on_token_callback: (text) => {
+          accumulatedText += text;
+          displayResult(accumulatedText);
+        }
+      });
+
+      const output = await generator(messages, {
+        max_new_tokens:   256,
+        temperature:      0.6,
+        do_sample:        true,
+        return_full_text: false,
+        streamer: streamer
+      });
+
+      const result = output[0].generated_text;
+      return Array.isArray(result) ? result.at(-1).content : result;
+    }
+
+    /* ============================================================
+       RENDER RESULT & HIGHLIGHT
+       ============================================================ */
+    function displayResult(text) {
+      outputEl.classList.remove('error');
+      outputLabel.textContent = 'analysis_result.md';
+      outputEl.innerHTML = highlight(escapeHtml(text));
+    }
+
+    function showError(message) {
+      outputEl.classList.add('error');
+      outputLabel.textContent = 'error';
+      outputEl.textContent = `[ERROR] ${message}`;
+    }
+
+    /* ============================================================
+       EVENT LISTENERS
+       ============================================================ */
+    analyzeBtn.addEventListener('click', async () => {
+      const stackTrace = inputEl.value.trim();
+
+      if (!stackTrace) {
+        inputEl.focus();
+        inputEl.style.outline = '2px solid var(--error)';
+        setTimeout(() => { inputEl.style.outline = ''; }, 1500);
+        return;
+      }
+
+      // Smooth show output panel
+      outputPanel.classList.add('visible');
+      outputEl.classList.remove('error');
+      outputEl.textContent = '';
+      outputLabel.textContent = 'initializing...';
+      setLoadingState(true);
+
+      try {
+        const targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
+
+        if (!modelReady || loadedDevice !== targetDevice) {
+          await loadModel();
+        }
+
+        setModelState('running');
+        outputLabel.textContent = 'running local inference...';
+
+        await getExplanation(stackTrace);
+        setModelState('ready');
+      } catch (err) {
+        setModelState('error');
+        showError(err.message || 'An unexpected error occurred.');
+      } finally {
+        setLoadingState(false);
+      }
+    });
+
+    function setLoadingState(isLoading) {
+      if (isLoading) {
+        analyzeBtn.disabled = true;
+        analyzeBtn.querySelector('span').textContent = 'Analyzing';
+        analyzeBtn.querySelector('span').classList.add('loading');
+        loaderBar.classList.add('active');
+      } else {
+        analyzeBtn.disabled = false;
+        analyzeBtn.querySelector('span').textContent = 'Analyze Trace';
+        analyzeBtn.querySelector('span').classList.remove('loading');
+        loaderBar.classList.remove('active');
+      }
+    }
+
+    function setModelState(state) {
+      const shortName = MODEL_ID.split('/')[1];
+
+      const config = {
+        idle:    { led: 'led-idle',    badge: 'badge-idle',    text: `AI Engine: ${shortName} (Inactive)` },
+        loading: { led: 'led-loading', badge: 'badge-loading', text: `Downloading ${shortName} (~90MB)...` },
+        ready:   { led: 'led-ready',   badge: 'badge-ready',   text: `AI Engine: ${shortName} (Ready)` },
+        running: { led: 'led-running', badge: 'badge-running', text: `Local Inference running...` },
+        error:   { led: 'led-error',   badge: 'badge-error',   text: `AI Engine: failed to load model` }
+      }[state] ?? { led: 'led-idle', badge: '', text: '' };
+
+      modelLed.className = `led ${config.led}`;
+      modelBadge.className = `badge ${config.badge}`;
+      modelBadge.textContent = state;
+      modelStatusText.textContent = config.text;
+    }
+
+    function escapeHtml(str) {
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/<//g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    /* Single-pass regex tokenizer to color terms safely */
+    function highlight(escapedText) {
+      const regex = new RegExp(
+        /(^|\n)(#[^\n]*)/.source + '|' +
+        /(\/[^\s<>]+|\b\w+\.\w+:\d+)/.source + '|' +
+        /\b(at|in|on|return|throw|raise|import|from|class|def|function|const|let|var|null|None|undefined|true|false|True|False)\b/.source + '|' +
+        /\b(Fix|fix|Solution|solution|Cause|cause|Error|error|Exception|exception)\b/.source,
+        'g'
+      );
+
+      return escapedText.replace(regex, (match, group1Prefix, comment, path, keyword, action) => {
+        if (comment !== undefined) {
+          return `${group1Prefix}<span class="hl-comment">${comment}</span>`;
+        }
+        if (path !== undefined) {
+          return `<span class="hl-string">${path}</span>`;
+        }
+        if (keyword !== undefined) {
+          return `<span class="hl-keyword">${keyword}</span>`;
+        }
+        if (action !== undefined) {
+          return `<span class="hl-accent">${action}</span>`;
+        }
+        return match;
+      });
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes)              return '';
+      if (bytes < 1024)        return `${bytes} B`;
+      if (bytes < 1048576)     return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / 1048576).toFixed(1)} MB`;
+    }
+
+    // Tab key inserts double spaces in editor
+    inputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        const s = inputEl.selectionStart;
+        inputEl.value =
+          inputEl.value.substring(0, s) + '  ' +
+          inputEl.value.substring(inputEl.selectionEnd);
+        inputEl.selectionStart = inputEl.selectionEnd = s + 2;
+      }
+    });
+  </script>
+</body>
+</html>
