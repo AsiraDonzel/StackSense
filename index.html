@@ -626,15 +626,9 @@
         </div>
         
         <div style="display: flex; align-items: center; gap: 16px;">
-          <!-- Segmented Control for Engine Select -->
-          <div class="segmented-control" role="radiogroup" aria-label="AI Engine Select">
-            <button type="button" id="btnEngineLocal" class="segment-btn active" role="radio" aria-checked="true">LOCAL</button>
-            <button type="button" id="btnEngineCloud" class="segment-btn" role="radio" aria-checked="false">CLOUD</button>
-          </div>
-
-          <!-- GPU Acceleration Switch (only shown in local mode) -->
+          <!-- GPU Acceleration Switch -->
           <label class="gpu-toggle-container" id="gpuLabel">
-            <span>GPU</span>
+            <span>GPU Acceleration</span>
             <span class="switch">
               <input type="checkbox" id="webgpuToggle" checked>
               <span class="slider"></span>
@@ -741,7 +735,6 @@
     let generator    = null;
     let modelReady   = false;
     let loadedDevice = null;
-    let engineMode   = 'local'; // 'local' or 'cloud'
 
     /* ============================================================
        DOM ELEMENTS
@@ -762,8 +755,6 @@
     const webgpuToggle      = document.getElementById('webgpuToggle');
     const gpuLabel          = document.getElementById('gpuLabel');
     const modelLed          = document.getElementById('modelLed');
-    const btnEngineLocal    = document.getElementById('btnEngineLocal');
-    const btnEngineCloud    = document.getElementById('btnEngineCloud');
 
     // Auto-detect WebGPU support
     if (!navigator.gpu) {
@@ -772,52 +763,6 @@
       gpuLabel.title = "WebGPU is not supported or enabled in this browser.";
       gpuLabel.style.cursor = "not-allowed";
       gpuLabel.style.opacity = "0.5";
-    }
-
-    /* ============================================================
-       ENGINE MODE TOGGLE
-       ============================================================ */
-    btnEngineLocal.addEventListener('click', () => setEngineMode('local'));
-    btnEngineCloud.addEventListener('click', () => setEngineMode('cloud'));
-
-    function setEngineMode(mode) {
-      engineMode = mode;
-      if (mode === 'local') {
-        btnEngineLocal.classList.add('active');
-        btnEngineLocal.setAttribute('aria-checked', 'true');
-        btnEngineCloud.classList.remove('active');
-        btnEngineCloud.setAttribute('aria-checked', 'false');
-
-        // Restore GPU toggle view
-        gpuLabel.style.opacity = '1';
-        gpuLabel.style.pointerEvents = 'auto';
-        if (webgpuToggle.disabled) {
-          gpuLabel.style.opacity = '0.5';
-        }
-
-        // Restore local model LED/status
-        if (modelReady) {
-          setModelState('ready');
-        } else {
-          setModelState('idle');
-        }
-      } else {
-        btnEngineLocal.classList.remove('active');
-        btnEngineLocal.setAttribute('aria-checked', 'false');
-        btnEngineCloud.classList.add('active');
-        btnEngineCloud.setAttribute('aria-checked', 'true');
-
-        // Hide GPU toggle (not needed for cloud)
-        gpuLabel.style.opacity = '0';
-        gpuLabel.style.pointerEvents = 'none';
-
-        // Set Cloud engine status
-        modelLed.className = 'led led-ready';
-        modelBadge.className = 'badge badge-ready';
-        modelBadge.textContent = 'ready';
-        modelStatusText.textContent = 'Cloud Engine: Gemini 1.5 (Ready)';
-        modelProgressWrap.style.display = 'none';
-      }
     }
 
     // Helper to race a promise with a timer to prevent silent GPU hangs
@@ -971,27 +916,6 @@
     }
 
     /* ============================================================
-       CLOUD API INFERENCE (Vercel Serverless Function)
-       ============================================================ */
-    async function getExplanationCloud(stackTrace) {
-      const response = await fetch('/api/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({ stackTrace })
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        throw new Error(err.error || `Serverless function returned status ${response.status}`);
-      }
-
-      const data = await response.json();
-      return data.explanation;
-    }
-
-    /* ============================================================
        RENDER RESULT & HIGHLIGHT
        ============================================================ */
     function displayResult(text) {
@@ -1031,44 +955,20 @@
       setLoadingState(true);
 
       try {
-        if (engineMode === 'local') {
-          const targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
+        const targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
 
-          if (!modelReady || loadedDevice !== targetDevice) {
-            await loadModel();
-          }
-
-          setModelState('running');
-          outputLabel.textContent = 'running local inference...';
-
-          const explanation = await getExplanationLocal(stackTrace);
-          displayResult(explanation);
-          setModelState('ready');
-        } else {
-          // Cloud mode
-          modelLed.className = 'led led-running';
-          modelBadge.className = 'badge badge-running';
-          modelBadge.textContent = 'running';
-          modelStatusText.textContent = 'Calling cloud model...';
-          outputLabel.textContent = 'calling Vercel serverless function...';
-
-          const explanation = await getExplanationCloud(stackTrace);
-          displayResult(explanation);
-
-          modelLed.className = 'led led-ready';
-          modelBadge.className = 'badge badge-ready';
-          modelBadge.textContent = 'ready';
-          modelStatusText.textContent = 'Cloud Engine: Gemini 1.5 (Ready)';
+        if (!modelReady || loadedDevice !== targetDevice) {
+          await loadModel();
         }
+
+        setModelState('running');
+        outputLabel.textContent = 'running local inference...';
+
+        const explanation = await getExplanationLocal(stackTrace);
+        displayResult(explanation);
+        setModelState('ready');
       } catch (err) {
-        if (engineMode === 'local') {
-          setModelState('error');
-        } else {
-          modelLed.className = 'led led-error';
-          modelBadge.className = 'badge badge-error';
-          modelBadge.textContent = 'error';
-          modelStatusText.textContent = 'Cloud Engine: request failed';
-        }
+        setModelState('error');
         showError(err.message || 'An unexpected error occurred.', err);
       } finally {
         setLoadingState(false);
