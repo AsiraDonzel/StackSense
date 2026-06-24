@@ -1,5 +1,5 @@
 // api/analyze.js
-// Vercel Serverless Function to call Gemini 2.0 securely
+// Vercel Serverless Function to call Hugging Face Inference API securely
 
 export default async function handler(req, res) {
   // Guard: Only allow POST requests
@@ -13,44 +13,43 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Valid stackTrace string is required in request body.' });
   }
 
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = process.env.HF_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ 
-      error: 'Gemini API Key is not configured on the server. Please add GEMINI_API_KEY to your Vercel Environment Variables.' 
+      error: 'Hugging Face API Key is not configured on the server. Please add HF_API_KEY to your Vercel Environment Variables.' 
     });
   }
 
-  // The prompt structure matches the client-side expectations
+  // The prompt matches the original Hugging Face specifications
   const prompt = "Explain the following stack trace in simple terms and suggest a fix:\n" + stackTrace.trim();
 
   try {
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+      "https://api-inference.huggingface.co/models/Salesforce/codegen-350M-mono",
       {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{ text: prompt }]
-          }]
-        })
+        body: JSON.stringify({ inputs: prompt })
       }
     );
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
+      const errorText = await response.text();
       return res.status(response.status).json({
-        error: errorData?.error?.message || `Gemini API responded with status ${response.status}`
+        error: `Hugging Face API responded with status ${response.status}: ${errorText}`
       });
     }
 
     const data = await response.json();
-    const explanation = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    
+    // Parse response: if it's an array, extract generated_text from the first element
+    const explanation = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
 
     if (!explanation) {
-      throw new Error('Gemini API returned an empty response.');
+      throw new Error('Hugging Face API returned an empty response.');
     }
 
     return res.status(200).json({ explanation });
