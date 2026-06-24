@@ -815,7 +815,7 @@
         modelLed.className = 'led led-ready';
         modelBadge.className = 'badge badge-ready';
         modelBadge.textContent = 'ready';
-        modelStatusText.textContent = 'Cloud Engine: Hugging Face (Ready)';
+        modelStatusText.textContent = 'Cloud Engine: Gemini 1.5 (Ready)';
         modelProgressWrap.style.display = 'none';
       }
     }
@@ -1058,7 +1058,7 @@
           modelLed.className = 'led led-ready';
           modelBadge.className = 'badge badge-ready';
           modelBadge.textContent = 'ready';
-          modelStatusText.textContent = 'Cloud Engine: Hugging Face (Ready)';
+          modelStatusText.textContent = 'Cloud Engine: Gemini 1.5 (Ready)';
         }
       } catch (err) {
         if (engineMode === 'local') {
@@ -1109,7 +1109,7 @@
     function escapeHtml(str) {
       return str
         .replace(/&/g, '&amp;')
-        .replace(/<//g, '&lt;')
+        .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');

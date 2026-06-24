@@ -1,6 +1,6 @@
 // api/analyze.js
-// Vercel Serverless Function to call Hugging Face Inference API securely
-// Uses Node's native 'https' module to prevent Vercel IPv6 'fetch failed' resolution bugs.
+// Vercel Serverless Function to call Gemini 1.5 Flash API securely.
+// Uses Node's native 'https' module to ensure cross-platform DNS stability on Vercel.
 
 import https from 'https';
 
@@ -16,39 +16,38 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Valid stackTrace string is required in request body.' });
   }
 
-  const apiKey = process.env.HF_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     return res.status(500).json({ 
-      error: 'Hugging Face API Key is not configured on the server. Please add HF_API_KEY to your Vercel Environment Variables.' 
+      error: 'Gemini API Key is not configured on the server. Please add GEMINI_API_KEY to your Vercel Environment Variables.' 
     });
   }
 
   const prompt = "Explain the following stack trace in simple terms and suggest a fix:\n" + stackTrace.trim();
 
-  // Call Hugging Face API using the native https module (bypasses Vercel undici fetch IPv6 issue)
   try {
+    // Calling Gemini 1.5 Flash – highly stable, free tier available globally
     const responseData = await makeHttpsRequest(
-      "https://api-inference.huggingface.co/models/Salesforce/codegen-350M-mono",
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
-        'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'User-Agent': 'StackSense/1.0 (Vercel Serverless)'
       },
-      JSON.stringify({ inputs: prompt })
+      JSON.stringify({
+        contents: [{
+          parts: [{ text: prompt }]
+        }]
+      })
     );
 
-    // Parse the response
     const data = JSON.parse(responseData);
-    
-    // Extract explanation
-    const explanation = Array.isArray(data) ? data[0]?.generated_text : data?.generated_text;
+    const explanation = data.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!explanation) {
-      // If the model returned an error message in JSON
       if (data.error) {
-        return res.status(500).json({ error: `Hugging Face API Error: ${data.error}` });
+        return res.status(500).json({ error: `Gemini API Error: ${data.error.message || data.error}` });
       }
-      throw new Error('Hugging Face API returned an empty or invalid response.');
+      throw new Error('Gemini API returned an empty or invalid response.');
     }
 
     return res.status(200).json({ explanation });
@@ -67,7 +66,7 @@ function makeHttpsRequest(url, headers, body) {
       hostname: urlObj.hostname,
       path: urlObj.pathname + urlObj.search,
       headers: headers,
-      timeout: 25000 // generous 25s timeout for cold model starts
+      timeout: 20000 // 20s timeout
     };
 
     const req = https.request(options, (res) => {
@@ -88,7 +87,7 @@ function makeHttpsRequest(url, headers, body) {
 
     req.on('timeout', () => {
       req.destroy();
-      reject(new Error('Request timed out while waiting for Hugging Face Inference API.'));
+      reject(new Error('Request timed out while waiting for Google Gemini API.'));
     });
 
     req.write(body);
