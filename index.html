@@ -823,30 +823,55 @@
     /* ============================================================
        LOAD MODEL
        ============================================================ */
+    /* ============================================================
+       LOAD MODEL
+       ============================================================ */
     async function loadModel() {
       setModelState('loading');
       modelProgressWrap.style.display = 'flex';
       modelProgressWrap.setAttribute('aria-hidden', 'false');
 
-      const targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
-
-      if (targetDevice === 'wasm') {
-        // Prevent worker thread deadlocks when running serverless
-        env.backends.onnx.wasm.numThreads = 1;
-      }
+      let targetDevice = webgpuToggle.checked ? 'webgpu' : 'wasm';
 
       try {
-        generator = await pipeline(
-          'text-generation',
-          MODEL_ID,
-          {
-            dtype: 'q4',
-            device: targetDevice,
-            progress_callback: onProgress
+        if (targetDevice === 'webgpu') {
+          try {
+            // Attempt loading on WebGPU with a 10s safety timeout to prevent silent compiler hangs
+            generator = await promiseWithTimeout(
+              pipeline('text-generation', MODEL_ID, {
+                dtype: 'q4',
+                device: 'webgpu',
+                progress_callback: onProgress
+              }),
+              10000,
+              'GPU compilation timed out'
+            );
+            loadedDevice = 'webgpu';
+          } catch (gpuErr) {
+            console.warn("WebGPU failed or timed out. Falling back to CPU WASM:", gpuErr);
+            webgpuToggle.checked = false;
+            webgpuToggle.disabled = true;
+            gpuLabel.title = `GPU failed: ${gpuErr.message || gpuErr}. Defaulted to CPU.`;
+            gpuLabel.style.opacity = '0.5';
+            targetDevice = 'wasm';
           }
-        );
+        }
 
-        loadedDevice = targetDevice;
+        if (targetDevice === 'wasm') {
+          // Prevent worker thread deadlocks when running serverless
+          env.backends.onnx.wasm.numThreads = 1;
+          generator = await pipeline(
+            'text-generation',
+            MODEL_ID,
+            {
+              dtype: 'q4',
+              device: 'wasm',
+              progress_callback: onProgress
+            }
+          );
+          loadedDevice = 'wasm';
+        }
+
         modelReady = true;
         setModelState('ready');
 
@@ -859,6 +884,18 @@
         console.error("Failed to load model:", err);
         throw new Error(`Model loading failed: ${err.message || err}`);
       }
+    }
+
+    // Helper to race a promise with a timer
+    function promiseWithTimeout(promise, ms, errorMsg) {
+      let timeoutId;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(errorMsg)), ms);
+      });
+      return Promise.race([promise, timeoutPromise]).then((res) => {
+        clearTimeout(timeoutId);
+        return res;
+      });
     }
 
     /* ---- Progress callback ---- */
@@ -1001,7 +1038,8 @@
           setModelState('running');
           outputLabel.textContent = 'running local inference...';
 
-          await getExplanationLocal(stackTrace);
+          const explanation = await getExplanationLocal(stackTrace);
+          displayResult(explanation);
           setModelState('ready');
         } else {
           // Cloud mode
